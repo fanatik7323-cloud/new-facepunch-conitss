@@ -1,1 +1,276 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facepunch — Главные коммиты</title>
+    <style>
+        :root {
+            --bg: #111317;
+            --card: #1b1e24;
+            --accent: #cd412b;
+            --text: #e4e6eb;
+            --muted: #8b929a;
+            --like: #4caf50;
+            --dislike: #ef5350;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 24px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #2a2e37;
+        }
+        h1 { font-size: 1.5rem; color: #fff; }
+        h1 span { color: var(--accent); }
+        .subtitle { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+        button, label.toggle {
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid #323742;
+            padding: 8px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            user-select: none;
+        }
+        button:hover, label.toggle:hover { border-color: var(--accent); }
+        .commit-list { display: flex; flex-direction: column; gap: 14px; }
+        .commit-card {
+            background: var(--card);
+            border-left: 4px solid var(--accent);
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .commit-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+        .author {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .author img {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+        .branch-badge {
+            background: #282c35;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #9cdcfe;
+        }
+        .commit-msg {
+            font-size: 1.05rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .commit-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 4px;
+        }
+        .reactions { display: flex; gap: 14px; font-weight: 600; font-size: 0.95rem; }
+        .likes { color: var(--like); }
+        .dislikes { color: var(--dislike); }
+        .status {
+            text-align: center;
+            color: var(--muted);
+            padding: 40px 20px;
+            background: var(--card);
+            border-radius: 8px;
+        }
+        a.orig-link { color: var(--muted); font-size: 0.85rem; text-decoration: none; }
+        a.orig-link:hover { color: #fff; text-decoration: underline; }
+    </style>
+</head>
+<body>
 
+    <header>
+        <div>
+            <h1><span>FACEPUNCH</span> ГЛАВНЫЕ КОММИТЫ</h1>
+            <div class="subtitle">Условие: больше 2 👍 или больше 3 👎</div>
+        </div>
+        <div class="controls">
+            <label class="toggle">
+                <input type="checkbox" id="majorOnly" checked>
+                Только новые вещи и крупные изменения
+            </label>
+            <button id="refreshBtn">Обновить</button>
+        </div>
+    </header>
+
+    <div id="commitsContainer" class="commit-list">
+        <div class="status">Загрузка коммитов с Facepunch...</div>
+    </div>
+
+    <script>
+        const TARGET_URL = 'https://commits.facepunch.com/r/rust_reboot?format=json';
+
+        // Ключевые слова для крупных изменений и новых предметов
+        const MAJOR_KEYWORDS = [
+            'add', 'added', 'new', 'item', 'weapon', 'gun', 'vehicle', 'monument',
+            'rework', 'overhaul', 'update', 'prefab', 'entity', 'deployable',
+            'armor', 'clothing', 'dlc', 'world', 'terrain', 'ai', 'npc', 'event',
+            'buff', 'nerf', 'balance', 'ui', 'menu', 'craft', 'blueprint'
+        ];
+
+        // Исключаем мелкие технические правки
+        const IGNORE_KEYWORDS = [
+            'merge', 'typo', 'cleanup', 'comment', 'formatting', 'whitespace'
+        ];
+
+        const container = document.getElementById('commitsContainer');
+        const majorCheckbox = document.getElementById('majorOnly');
+        const refreshBtn = document.getElementById('refreshBtn');
+
+        // Запрос через прокси-шлюзы для работы прямо на GitHub Pages
+        async function fetchFacepunchData() {
+            const proxies = [
+                async () => {
+                    const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(TARGET_URL)}`);
+                    if (!r.ok) throw new Error();
+                    const d = await r.json();
+                    return JSON.parse(d.contents);
+                },
+                async () => {
+                    const r = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(TARGET_URL)}`);
+                    if (!r.ok) throw new Error();
+                    return await r.json();
+                },
+                async () => {
+                    const r = await fetch(`https://corsproxy.io/?${encodeURIComponent(TARGET_URL)}`);
+                    if (!r.ok) throw new Error();
+                    return await r.json();
+                }
+            ];
+
+            for (const tryFetch of proxies) {
+                try {
+                    const data = await tryFetch();
+                    if (data && Array.isArray(data.results)) return data.results;
+                } catch (e) {
+                    // Пробуем следующий шлюз
+                }
+            }
+            throw new Error('Не удалось получить ответ от Facepunch');
+        }
+
+        let cachedCommits = null;
+
+        async function loadCommits(forceReload = false) {
+            container.innerHTML = '<div class="status">Загрузка и фильтрация коммитов...</div>';
+            try {
+                if (!cachedCommits || forceReload) {
+                    cachedCommits = await fetchFacepunchData();
+                }
+
+                const onlyMajor = majorCheckbox.checked;
+
+                const filtered = cachedCommits.filter(commit => {
+                    const likes = Number(commit.likes ?? commit.Likes ?? 0);
+                    const dislikes = Number(commit.dislikes ?? commit.Dislikes ?? 0);
+                    const msg = (commit.message || '').toLowerCase();
+
+                    // Условие 1: больше 2 лайков ИЛИ больше 3 дизлайков
+                    const hasReactions = likes > 2 || dislikes > 3;
+                    if (!hasReactions) return false;
+
+                    // Условие 2: фильтр новых вещей и крупных изменений
+                    if (onlyMajor) {
+                        if (IGNORE_KEYWORDS.some(w => msg.includes(w))) return false;
+                        return MAJOR_KEYWORDS.some(w => msg.includes(w));
+                    }
+                    return true;
+                });
+
+                if (filtered.length === 0) {
+                    container.innerHTML = '<div class="status">Среди последних коммитов нет подходящих под все условия.<br><br>Попробуйте снять галочку «Только новые вещи и крупные изменения», чтобы увидеть все коммиты с реакциями.</div>';
+                    return;
+                }
+
+                container.innerHTML = filtered.map(c => {
+                    const userName = c.user ? c.user.name : 'Facepunch Dev';
+                    const avatar = (c.user && c.user.avatar) ? c.user.avatar : 'https://files.facepunch.com/garry/1b1511b1-2020-05-02_00-14-36.png';
+                    const branch = `${c.repo || 'rust_reboot'}/${c.branch || 'main'}`;
+                    const likes = c.likes ?? c.Likes ?? 0;
+                    const dislikes = c.dislikes ?? c.Dislikes ?? 0;
+                    const date = c.created ? new Date(c.created).toLocaleString('ru-RU') : '';
+
+                    return `
+                        <div class="commit-card">
+                            <div class="commit-header">
+                                <div class="author">
+                                    <img src="${avatar}" alt="avatar">
+                                    <span>${escapeHtml(userName)}</span>
+                                    <span class="branch-badge">${escapeHtml(branch)}</span>
+                                </div>
+                                <span>${date} (#${c.id})</span>
+                            </div>
+                            <div class="commit-msg">${escapeHtml(c.message || '')}</div>
+                            <div class="commit-footer">
+                                <div class="reactions">
+                                    <span class="likes">👍 ${likes}</span>
+                                    <span class="dislikes">👎 ${dislikes}</span>
+                                </div>
+                                <a class="orig-link" href="https://commits.facepunch.com/${c.id}" target="_blank" rel="noopener">Открыть на Facepunch →</a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                container.innerHTML = '<div class="status">Не удалось загрузить данные. Нажмите «Обновить» через пару секунд.</div>';
+            }
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[tag]));
+        }
+
+        majorCheckbox.addEventListener('change', () => loadCommits(false));
+        refreshBtn.addEventListener('click', () => loadCommits(true));
+
+        loadCommits(true);
+    </script>
+</body>
+</html>
