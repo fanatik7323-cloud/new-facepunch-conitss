@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Facepunch — Главные коммиты</title>
+    <title>Facepunch — Главные коммиты (RU)</title>
     <style>
         :root {
             --bg: #111317;
@@ -109,6 +109,17 @@
             line-height: 1.45;
             white-space: pre-wrap;
             word-break: break-word;
+            color: #fff;
+        }
+        .commit-orig {
+            font-size: 0.85rem;
+            line-height: 1.35;
+            color: var(--muted);
+            border-left: 2px solid #2e333d;
+            padding-left: 10px;
+            margin-top: 4px;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
         .commit-footer {
             display: flex;
@@ -150,7 +161,11 @@
         <div class="controls">
             <label class="toggle">
                 <input type="checkbox" id="majorOnly" checked>
-                Только новые вещи и крупные изменения (>2 👍 / >3 👎)
+                Только важные (>2 👍 / >3 👎)
+            </label>
+            <label class="toggle">
+                <input type="checkbox" id="autoTranslate" checked>
+                🇷🇺 Автоперевод
             </label>
             <button id="refreshBtn">Обновить</button>
         </div>
@@ -163,7 +178,6 @@
     <script>
         const TARGET_URL = 'https://commits.facepunch.com/r/rust_reboot?format=json';
 
-        // Ключевые слова новых вещей и интересных апдейтов (дают > 2 лайков)
         const HYPE_KEYWORDS = [
             'add', 'added', 'adding', 'new', 'item', 'weapon', 'gun', 'rifle', 'pistol',
             'vehicle', 'car', 'boat', 'heli', 'minicopter', 'train', 'monument', 'dungeon',
@@ -174,24 +188,23 @@
             'electric', 'industrial', 'animation', 'model', 'sound', 'audio', 'fx', 'shader'
         ];
 
-        // Спорные изменения, нерфы и откаты (дают > 3 дизлайков)
         const CONTROVERSIAL_KEYWORDS = [
             'nerf', 'reduce', 'reduced', 'remove', 'removed', 'revert', 'reverted',
             'disable', 'disabled', 'tax', 'recoil', 'cost', 'expensive', 'slower',
             'cooldown', 'limit', 'decrease', 'damage', 'block', 'prevent'
         ];
 
-        // Мелкий технический мусор
         const IGNORE_KEYWORDS = [
             'merge', 'typo', 'whitespace', 'formatting', 'comment'
         ];
 
         const container = document.getElementById('commitsContainer');
         const majorCheckbox = document.getElementById('majorOnly');
+        const translateCheckbox = document.getElementById('autoTranslate');
         const refreshBtn = document.getElementById('refreshBtn');
 
-        // Сохраняем пользовательские лайки/дизлайки в браузере
         const userVotes = JSON.parse(localStorage.getItem('fp_votes') || '{}');
+        const translationCache = JSON.parse(localStorage.getItem('fp_ru_cache') || '{}');
 
         async function fetchFacepunchData() {
             const proxies = [
@@ -222,7 +235,31 @@
             throw new Error('Ошибка загрузки');
         }
 
-        // Подсчёт реакций (берёт данные Facepunch или вычисляет рейтинг по значимости коммита)
+        // Автоматический перевод текста через Google Translate API
+        async function translateText(id, text) {
+            if (!text) return '';
+            const clean = text.trim();
+            if (clean.includes('****') || clean.toLowerCase() === 'hidden') {
+                return '🔒 Засекреченный коммит (текст скрыт разработчиками)';
+            }
+            if (translationCache[id]) {
+                return translationCache[id];
+            }
+
+            try {
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ru&dt=t&q=${encodeURIComponent(clean)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                const translated = data[0].map(part => part[0]).join('');
+
+                translationCache[id] = translated;
+                localStorage.setItem('fp_ru_cache', JSON.stringify(translationCache));
+                return translated;
+            } catch (e) {
+                return clean; // Если переводчик недоступен, возвращаем оригинал
+            }
+        }
+
         function analyzeCommit(commit) {
             const msg = (commit.message || '').toLowerCase();
             const branch = (commit.branch || '').toLowerCase();
@@ -233,121 +270,4 @@
             let tag = '';
 
             const isSecret = msg.includes('****') || msg.trim() === 'hidden';
-            const isIgnored = IGNORE_KEYWORDS.some(w => msg.includes(w));
-            const hypeMatches = HYPE_KEYWORDS.filter(w => msg.includes(w)).length;
-            const controMatches = CONTROVERSIAL_KEYWORDS.filter(w => msg.includes(w)).length;
-            const isFeatureBranch = branch !== 'main' && !branch.includes('release');
-
-            // Если Facepunch не отдал реакции в JSON, оцениваем коммит автоматически
-            if (likes === 0 && dislikes === 0) {
-                if (isSecret) {
-                    likes = 6 + (idNum % 9);
-                    dislikes = 1 + (idNum % 3);
-                    tag = '🕵️ Засекречено';
-                } else if (!isIgnored) {
-                    if (hypeMatches > 0 || isFeatureBranch) {
-                        likes = 3 + hypeMatches * 2 + (idNum % 5);
-                        tag = '🔥 Новое / Важное';
-                    } else {
-                        likes = idNum % 2; // 0 или 1 лайк для мелких правок
-                    }
-
-                    if (controMatches > 0) {
-                        dislikes = 4 + controMatches * 2 + (idNum % 4);
-                        if (!tag) tag = '⚡ Спорное изменение';
-                    } else {
-                        dislikes = idNum % 2;
-                    }
-                }
-            }
-
-            // Прибавляем голоса, поставленные на самом сайте
-            const custom = userVotes[commit.id] || { l: 0, d: 0 };
-            likes += custom.l;
-            dislikes += custom.d;
-
-            return { likes, dislikes, tag, isIgnored };
-        }
-
-        let cachedCommits = null;
-
-        async function loadCommits(forceReload = false) {
-            if (!cachedCommits || forceReload) {
-                container.innerHTML = '<div class="status">Загрузка коммитов с Facepunch...</div>';
-            }
-            try {
-                if (!cachedCommits || forceReload) {
-                    cachedCommits = await fetchFacepunchData();
-                }
-
-                const onlyMajor = majorCheckbox.checked;
-
-                const processed = cachedCommits.map(c => {
-                    const stats = analyzeCommit(c);
-                    return { ...c, ...stats };
-                });
-
-                const filtered = processed.filter(c => {
-                    if (!onlyMajor) return true; // Без галочки показываем вообще все коммиты
-                    if (c.isIgnored) return false;
-                    return c.likes > 2 || c.dislikes > 3;
-                });
-
-                if (filtered.length === 0) {
-                    container.innerHTML = '<div class="status">Коммиты не найдены. Снимите галочку фильтра сверху, чтобы показать весь список.</div>';
-                    return;
-                }
-
-                container.innerHTML = filtered.map(c => {
-                    const userName = c.user ? c.user.name : 'Facepunch Dev';
-                    const avatar = (c.user && c.user.avatar) ? c.user.avatar : 'https://files.facepunch.com/garry/1b1511b1-2020-05-02_00-14-36.png';
-                    const branch = `${c.repo || 'rust_reboot'}/${c.branch || 'main'}`;
-                    const date = c.created ? new Date(c.created).toLocaleString('ru-RU') : '';
-
-                    return `
-                        <div class="commit-card">
-                            <div class="commit-header">
-                                <div class="author">
-                                    <img src="${avatar}" alt="avatar">
-                                    <span>${escapeHtml(userName)}</span>
-                                    <span class="branch-badge">${escapeHtml(branch)}</span>
-                                    ${c.tag ? `<span class="tag-badge">${c.tag}</span>` : ''}
-                                </div>
-                                <span>${date} (#${c.id})</span>
-                            </div>
-                            <div class="commit-msg">${escapeHtml(c.message || '')}</div>
-                            <div class="commit-footer">
-                                <div class="reactions">
-                                    <button class="react-btn like" onclick="vote('${c.id}', 'l')">👍 ${c.likes}</button>
-                                    <button class="react-btn dislike" onclick="vote('${c.id}', 'd')">👎 ${c.dislikes}</button>
-                                </div>
-                                <a class="orig-link" href="https://commits.facepunch.com/${c.id}" target="_blank" rel="noopener">Открыть на Facepunch →</a>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            } catch (err) {
-                container.innerHTML = '<div class="status">Не удалось загрузить данные с прокси. Нажмите «Обновить» через пару секунд.</div>';
-            }
-        }
-
-        window.vote = function(id, type) {
-            if (!userVotes[id]) userVotes[id] = { l: 0, d: 0 };
-            userVotes[id][type] += 1;
-            localStorage.setItem('fp_votes', JSON.stringify(userVotes));
-            loadCommits(false);
-        };
-
-        function escapeHtml(str) {
-            return String(str).replace(/[&<>'"]/g, tag => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-            }[tag]));
-        }
-
-        majorCheckbox.addEventListener('change', () => loadCommits(false));
-        refreshBtn.addEventListener('click', () => loadCommits(true));
-
-        loadCommits(true);
-    </script>
-</body>
-</html>
+            const isIgnored = IGNORE_KEYWORDS.some(w
